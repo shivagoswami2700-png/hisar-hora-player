@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101322">
+<title>Hora Music Player · Hisar</title>
+<style>
+:root{color-scheme:dark;--bg:#101322;--panel:#1a2034;--muted:#aab2ca;--text:#f6f7ff;--accent:#d7b879;--line:#303953}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% -20%,#303858 0,#101322 48%);color:var(--text);font:16px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:flex;justify-content:center;padding:24px 14px}
+main{width:min(680px,100%)}header{text-align:center;padding:18px 0 22px}h1{font-size:clamp(28px,7vw,42px);margin:0 0 6px;letter-spacing:.02em}.sub{color:var(--muted);margin:0}.panel{background:linear-gradient(145deg,#202842,#171c2e);border:1px solid var(--line);border-radius:22px;padding:22px;margin:12px 0;box-shadow:0 16px 40px #0004}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--accent);font-weight:700}.planet{font-size:clamp(34px,9vw,52px);font-weight:750;margin:7px 0 2px}.time{color:var(--muted);font-variant-numeric:tabular-nums}.count{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;margin:14px 0}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}button{border:0;border-radius:14px;padding:13px 18px;font:inherit;font-weight:700;background:var(--accent);color:#171827;cursor:pointer}button.secondary{background:#303953;color:var(--text)}button:disabled{opacity:.45}.status{font-size:14px;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}.status.error{color:#ffb5b5}.list{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}.item{padding:11px 12px;border-radius:12px;background:#11182a;border:1px solid transparent}.item.active{border-color:var(--accent);background:#292b36}.item strong{display:block}.item small{color:var(--muted);font-variant-numeric:tabular-nums}.foot{font-size:12px;color:var(--muted);text-align:center;padding:14px 8px}
+@media(max-width:430px){.list{grid-template-columns:1fr}.panel{padding:18px}}
+</style>
+</head>
+<body><main>
+<header><h1>Hora Music Player</h1><p class="sub">Planetary music · Hisar, Haryana</p></header>
+<section class="panel">
+<div class="eyebrow">Current Hora</div>
+<div class="planet" id="planet">Checking…</div>
+<div class="time" id="range">Fetching today's schedule from Drik Panchang</div>
+<div class="count" id="countdown">--:--:--</div>
+<div class="actions">
+<button id="play">▶ Play music</button>
+<button id="pause" class="secondary" disabled>Ⅱ Pause</button>
+<button id="refresh" class="secondary">↻ Refresh timings</button>
+</div>
+<p class="status" id="status" role="status">Audio starts after you tap Play. The next Hora track will switch automatically while playback is enabled.</p>
+<audio id="audio" preload="auto"></audio>
+</section>
+<section class="panel">
+<div class="eyebrow">Today's 24 Hora periods</div>
+<div class="status" id="date">Waiting for verified timings…</div>
+<div class="list" id="schedule"></div>
+</section>
+<p class="foot">Timings are accepted only after the page date and all 24 periods pass validation. Audio playback requires one tap because of mobile browser autoplay restrictions.</p>
+</main>
+<script>
+const audio=document.getElementById("audio"), statusEl=document.getElementById("status");
+const files={Sun:"audio/Sun.m4a",Moon:"audio/Moon.m4a",Mars:"audio/Mars.m4a",Mercury:"audio/Mercury.m4a",Jupiter:"audio/Jupiter.m4a",Venus:"audio/Venus.m4a",Saturn:"audio/Saturn.m4a"};
+let periods=[],playing=false,current=null,tick=null;
+const fmt=new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit",hour12:true});
+function setStatus(msg,error=false){statusEl.textContent=msg;statusEl.className="status"+(error?" error":"")}
+function findCurrent(){const now=Date.now();return periods.find(p=>now>=Date.parse(p.start)&&now<Date.parse(p.end))||null}
+function render(){
+ const p=findCurrent();
+ if(!p){document.getElementById("planet").textContent="No verified active Hora";document.getElementById("range").textContent="Schedule may be stale. Refresh timings.";return}
+ current=p.planet;document.getElementById("planet").textContent=current;
+ document.getElementById("range").textContent=fmt.format(new Date(p.start))+" – "+fmt.format(new Date(p.end))+" IST";
+ const remain=Math.max(0,Date.parse(p.end)-Date.now()),s=Math.floor(remain/1000);
+ document.getElementById("countdown").textContent=[Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(n=>String(n).padStart(2,"0")).join(":");
+ document.querySelectorAll(".item").forEach(el=>el.classList.toggle("active",Number(el.dataset.index)>=0&&periods[Number(el.dataset.index)]?.planet===current&&Date.now()>=Date.parse(periods[Number(el.dataset.index)].start)&&Date.now()<Date.parse(periods[Number(el.dataset.index)].end)));
+ if(playing&&audio.dataset.planet!==current) switchTrack(current);
+}
+async function switchTrack(planet){
+ if(!playing)return;
+ const src=files[planet];if(!src)return;
+ audio.dataset.planet=planet;audio.src=src;
+ try{await audio.play();setStatus("Playing "+planet+" Hora music. Tracks switch automatically at the next Hora.");}
+ catch(e){playing=false;document.getElementById("play").disabled=false;document.getElementById("pause").disabled=true;setStatus("Tap Play to resume audio. Your browser blocked automatic playback.",true);}
+}
+async function load(){
+ setStatus("Fetching and verifying today's Hisar schedule from Drik Panchang…");
+ document.getElementById("refresh").disabled=true;
+ try{
+  const r=await fetch("/api/hora",{cache:"no-store"}),data=await r.json();
+  if(!r.ok)throw new Error(data.detail||data.error||"Could not verify today's schedule.");
+  if(!Array.isArray(data.periods)||data.periods.length!==24)throw new Error("The server returned an incomplete schedule.");
+  periods=data.periods;document.getElementById("date").textContent=data.date+" · "+data.location+" · Source: "+data.source;
+  document.getElementById("schedule").innerHTML="";
+  periods.forEach((p,i)=>{const el=document.createElement("div");el.className="item";el.dataset.index=i;const a=document.createElement("strong"),b=document.createElement("small");a.textContent=(i+1)+". "+p.planet;b.textContent=fmt.format(new Date(p.start))+" – "+fmt.format(new Date(p.end));el.append(a,b);document.getElementById("schedule").append(el)});
+  setStatus("Today's schedule verified. Tap Play once to start; switching will then be automatic.");render();
+ }catch(e){periods=[];document.getElementById("planet").textContent="Not verified";document.getElementById("range").textContent="No music will play without verified timings.";document.getElementById("date").textContent="Verification failed";document.getElementById("schedule").innerHTML="";setStatus(e.message,true)}
+ finally{document.getElementById("refresh").disabled=false}
+}
+document.getElementById("play").addEventListener("click",async()=>{if(!periods.length){await load();if(!periods.length)return}playing=true;document.getElementById("play").disabled=true;document.getElementById("pause").disabled=false;const p=findCurrent();if(p)await switchTrack(p.planet);else{playing=false;setStatus("No active period was found in the verified schedule.",true)}});
+document.getElementById("pause").addEventListener("click",()=>{playing=false;audio.pause();document.getElementById("play").disabled=false;document.getElementById("pause").disabled=true;setStatus("Paused. Tap Play to continue.")});
+document.getElementById("refresh").addEventListener("click",load);
+audio.addEventListener("ended",()=>{if(playing&&current)switchTrack(current)});
+load();tick=setInterval(render,1000);
+</script>
+</body></html>
